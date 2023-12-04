@@ -1,6 +1,41 @@
 import re
 import pandas as pd
 from datetime import datetime
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
+import difflib
+from termcolor import colored
+from openpyxl.styles import Font
+
+def limpiar_cadena_create(cadena):
+    # Quitar todas las comillas dobles
+    cadena = cadena.replace('"', '')
+
+    # Quitar las subcadenas " BYTE"
+    cadena = cadena.replace(' BYTE', '')
+
+    # Quitar las subcadenas " NOT NULL"
+    cadena = cadena.replace(' NOT NULL', '')
+
+    cadena = cadena.replace('TIMESTAMP (6)','TIMESTAMP ')
+    
+    cadena = cadena.replace('  ',' ')
+
+    # Sustituir todas las subcadenas ", " por ","
+    cadena = cadena.replace(', ', ',')
+
+    # Sustituir todas las subcadenas " ," por ","
+    cadena = cadena.replace(' ,', ',')
+
+    # Eliminar todo lo que haya en la cadena a partir de "SEGMENT CREATION"
+    indice_segment_creation = cadena.find('SEGMENT CREATION')
+    if indice_segment_creation != -1:
+        cadena = cadena[:indice_segment_creation]
+
+    cadena=cadena.strip()    
+
+    return cadena
+
 
 # Abre el archivo SQL en modo lectura con codificación UTF-8
 with open('DDL_SI.sql', 'r', encoding='utf-8') as archivo:
@@ -21,60 +56,47 @@ errores_SI = []
 
 for declaracion in declaraciones:
     nombre_tabla_match = re.search(declaracion_tabla, declaracion)
+    alter_match = re.search(declaracion_alter, declaracion)
+    comment_match = re.search(declaracion_comment, declaracion)
 
     if nombre_tabla_match:
         nombre_tabla = nombre_tabla_match.group(1)
 
         indice_parentesis = declaracion.find('(')
         bloque_atributos = (declaracion[indice_parentesis:])[2:-1]
-
-        tabla_SI = [nombre_tabla, {"atributos": []}]
-
         bloque_atributos = bloque_atributos.splitlines()
+        attribute_list = []        
 
-        atributos = tabla_SI[1]["atributos"]
-
-        for atributo in bloque_atributos:
-
-            if atributo =="    ," or atributo=="":
+        for linea in bloque_atributos:
+            linea = re.sub(r'\s{2,}', ' ', linea)
+            linea = linea.strip()
+            if linea =="," or linea=="":
                 continue
-            
-            if "ERROR" in atributo:
-                errores_SI.append({"Tabla": nombre_tabla, "Error": atributo})
+            if "ERROR" in linea:
+                errores_SI.append({"Tabla": nombre_tabla.upper().strip(), "Error": linea})
                 continue
+            nombre_atributo, tipo_atributo = linea.split(' ', 1)
+            #print("nombre atb: "+ nombre_atributo + " / tipo atributo: " + tipo_atributo)
+            attribute_list.append({'nombre_atributo': nombre_atributo.upper().strip(), 'tipo_atributo': tipo_atributo.upper().strip()})
+        declaracion = re.sub(r'\n', ' ', declaracion)        
+        declaracion = re.sub(r'(?<=[^\' ]) +| +(?=[^\' ])', ' ', declaracion)
+        tablas_SI.append({'nombre_tabla': nombre_tabla.upper().strip(), 'atributos': attribute_list, 'ddl': declaracion.upper().strip()})   
 
-            atributo = atributo.strip()
-            atributo = re.sub(r'\s+', ' ', atributo)
-
-            atributo = atributo.split(' ', 1)
-
-            if atributo[1].endswith(','):
-                atributo[1] = atributo[1][:-1]
-
-            nuevo_atributo = {"nombre_atributo": atributo[0], "tipo_atributo": (atributo[1])}
-            atributos.append(nuevo_atributo)
-
-        tablas_SI.append(tabla_SI)
-
-    alter_match = re.search(declaracion_alter, declaracion)
-
-    if alter_match:
+    elif alter_match:
         nombre_tabla = declaracion.split(' ')[2]
         nombre_tabla = re.sub(r'\n', '', nombre_tabla)
         declaracion = re.sub(r'\n', ' ', declaracion)        
         declaracion = re.sub(r'(?<=[^\' ]) +| +(?=[^\' ])', ' ', declaracion) # sustituye grupos de espacios por uno solo, a no ser que estén entre comillas
-        alter_tables_SI.append((nombre_tabla, declaracion.strip()))
+        alter_tables_SI.append((nombre_tabla.upper().strip(), declaracion.upper().strip()))    
 
-    comment_match = re.search(declaracion_comment, declaracion)
-
-    if comment_match:
+    elif comment_match:
         nombre_tabla = declaracion.split(' ')[3]
         if '.' in nombre_tabla:
             nombre_tabla = nombre_tabla.split('.')[0]
         nombre_tabla = re.sub(r'\n', '', nombre_tabla)
         declaracion = re.sub(r'\n', ' ', declaracion)        
         declaracion = re.sub(r'(?<=[^\' ]) +| +(?=[^\' ])', ' ', declaracion) # sustituye grupos de espacios por uno solo, a no ser que estén entre comillas
-        comment_tables_SI.append((nombre_tabla, declaracion.strip()))   
+        comment_tables_SI.append((nombre_tabla.upper().strip(), declaracion.upper().strip()))   
 
 
 with open('ddl_db_desa.sql', 'r') as archivo: #ddl_db_desa_PRUEBA.sql
@@ -112,8 +134,20 @@ for declaracion in declaraciones:
                     if attribute_match:
                         attribute_name = attribute_match.group(1)
                         attribute_type = attribute_match.group(2)
-                        attribute_list.append({'nombre_atributo': attribute_name, 'tipo_atributo': attribute_type})
-                tablas_DB_desa.append({'nombre_tabla': table_name, 'atributos': attribute_list})
+                        attribute_list.append({'nombre_atributo': attribute_name.upper().strip(), 'tipo_atributo': attribute_type.upper().strip()})
+
+                declaracion = declaracion.split('\n')
+                filtered_lines = [line for line in declaracion if not line.strip().startswith('-')]
+
+                # Unir las líneas restantes en una sola línea
+                result_string = ' '.join(filtered_lines)
+                result_string = re.sub(r'\s{2,}', ' ', result_string)
+                # Eliminar cualquier ocurrencia de "OEVDSSII".
+                result_string = result_string.replace('"OEVDSSII".', '')        
+                
+                result_string = re.sub(r'\t', ' ', result_string)         
+                result_string = re.sub(r'(?<=[^\' ]) +| +(?=[^\' ])', ' ', result_string)        
+                tablas_DB_desa.append({'nombre_tabla': table_name.upper().strip(), 'atributos': attribute_list, 'ddl' : result_string.upper().strip()})
 
     elif alter_tabla_match:
         alter_statement = declaracion.split('\n')
@@ -128,7 +162,7 @@ for declaracion in declaraciones:
         match = re.search(r'"(.*?)"', result_string)
         if match:
             table_name = match.group(1)
-        alter_tables_DB_desa.append((table_name, result_string))
+        alter_tables_DB_desa.append((table_name, result_string.upper().strip()))
 
     elif comment_tabla_match:
         comment_statement = declaracion.split('\n')
@@ -152,75 +186,178 @@ for declaracion in declaraciones:
         elif result_string.startswith("COMMENT ON TABLE"):
             table_name = result_string.split(' ', 4)[3]
 
-        comment_tables_DB_desa.append((table_name, result_string.strip()))     
+        comment_tables_DB_desa.append((table_name.upper().strip(), result_string.upper().strip()))     
+
+
+# Extraer los table_name y DDL de ambas listas
+table_names_SI = {tabla["nombre_tabla"]: tabla["ddl"] for tabla in tablas_SI}
+table_names_DB_desa = {tabla["nombre_tabla"]: tabla["ddl"] for tabla in tablas_DB_desa}
+
+# Encontrar elementos presentes solo en tablas_SI
+elementos_solo_en_SI = set(table_names_SI.keys()) - set(table_names_DB_desa.keys())
+
+# Encontrar elementos presentes solo en tablas_DB_desa
+elementos_solo_en_DB_desa = set(table_names_DB_desa.keys()) - set(table_names_SI.keys())
+
+# Encontrar los elementos comunes (claves en ambos diccionarios)
+elementos_comunes = set(table_names_SI.keys()) & set(table_names_DB_desa.keys())
+
+# Obtener el campo 'DDL' correspondiente para los elementos solo en tablas_SI
+sentencias_create_para_DB_desa = {elemento: table_names_SI[elemento] for elemento in elementos_solo_en_SI}
+# Obtener el campo 'DDL' correspondiente para los elementos solo en tablas_DB_desa
+sentencias_create_para_SI = {elemento: table_names_DB_desa[elemento] for elemento in elementos_solo_en_DB_desa}
+
+# Convertir los conjuntos a listas para su uso en DataFrames
+elementos_comunes_lista = list(elementos_comunes)
+elementos_solo_en_SI_lista = list(elementos_solo_en_SI)
+elementos_solo_en_DB_desa_lista = list(elementos_solo_en_DB_desa)
+sentencias_create_para_DB_desa_lista = list(sentencias_create_para_DB_desa.items())
+sentencias_create_para_SI_lista = list(sentencias_create_para_SI.items())
+
+# Crear DataFrames para cada conjunto o lista
+df_elementos_comunes = pd.DataFrame({"Elementos Comunes": elementos_comunes_lista})
+df_solo_tablas_SI = pd.DataFrame({"Elementos Solo en tablas_SI": elementos_solo_en_SI_lista})
+df_solo_tablas_DB_desa = pd.DataFrame({"Elementos Solo en tablas_DB_desa": elementos_solo_en_DB_desa_lista})
+df_ddl_create_para_DB_desa = pd.DataFrame(sentencias_create_para_DB_desa_lista, columns=["Tabla", "DDL"])
+df_ddl_create_para_SI = pd.DataFrame(sentencias_create_para_SI_lista, columns=["Tabla", "DDL"])
+
+
+nombres_tablas_DB_desa = df_ddl_create_para_DB_desa["Tabla"].tolist()
+nombres_tablas_SI = df_ddl_create_para_SI["Tabla"].tolist()
+
+sentencias_alter_relacionadas = [fila for fila in alter_tables_SI if fila[0] in nombres_tablas_DB_desa]
+sentencias_alter_para_DB_desa = [fila[1] for fila in sentencias_alter_relacionadas]
+df_alter_para_DB_desa = pd.DataFrame(sentencias_alter_para_DB_desa, columns=["Sentencias ALTER para DB_desa"])
+
+sentencias_alter_relacionadas = [fila for fila in alter_tables_DB_desa if fila[0] in nombres_tablas_SI]
+sentencias_alter_para_SI = [fila[1] for fila in sentencias_alter_relacionadas]
+df_alter_para_SI = pd.DataFrame(sentencias_alter_para_SI, columns=["Sentencias ALTER para SI"])
+
+sentencias_comment_relacionadas = [fila for fila in comment_tables_SI if fila[0] in nombres_tablas_DB_desa]
+sentencias_comment_para_DB_desa = [fila[1] for fila in sentencias_comment_relacionadas]
+df_comment_para_DB_desa = pd.DataFrame(sentencias_comment_para_DB_desa, columns=["Sentencias COMMENT para DB_desa"])
+
+sentencias_comment_relacionadas = [fila for fila in comment_tables_DB_desa if fila[0] in nombres_tablas_SI]
+sentencias_comment_para_SI = [fila[1] for fila in sentencias_comment_relacionadas]
+df_comment_para_SI = pd.DataFrame(sentencias_comment_para_SI, columns=["Sentencias COMMENT para SI"])
+
+
+#TODO Ver si los alter table son iguales
+#TODO ver si los comentarios son iguales
+
+estados_tablas = []
+
+for elemento in elementos_comunes:
+
+    ddl_si = limpiar_cadena_create(table_names_SI[elemento])
+    ddl_db_desa = limpiar_cadena_create(table_names_DB_desa[elemento])
+
+    if ddl_si == ddl_db_desa:
+        estados_tablas.append('OK')
+    else:
+        estados_tablas.append('KO')
+
+
+df_elementos_comunes['Estado'] = estados_tablas    
+
+# Filtrar las filas con Estado 'KO' en df_elementos_comunes
+df_ko = df_elementos_comunes[df_elementos_comunes['Estado'] == 'KO']
 
 
 
-# Crear un DataFrame con las tablas SI
-df_tablas_SI = pd.DataFrame(tablas_SI, columns=["Table_Name", "Attributes"])
+df_resultado_ko = pd.DataFrame({
+    'Nombre de Tabla': df_ko['Elementos Comunes'],
+    'DDL en SI': [limpiar_cadena_create(table_names_SI[elemento]) for elemento in df_ko['Elementos Comunes']],
+    'DDL en db_desa': [limpiar_cadena_create(table_names_DB_desa[elemento]) for elemento in df_ko['Elementos Comunes']]
+})
 
-# Crear un DataFrame con las tablas DB_DESA
-df_tablas_DB_DESA = pd.DataFrame(tablas_DB_desa, columns=["Table_Name", "Attributes"])
+# Añadimos la columna 'Resultado'
+df_resultado_ko['Resultado'] = ""
 
-# Crear un DataFrame con los ALTER TABLEs SI
-df_alter_tables_SI = pd.DataFrame(alter_tables_SI, columns=["Table_Name", "Alter_Statement"])
+# Iteramos sobre las filas del DataFrame y aplicamos el código para cada par de cadenas
+for index, row in df_resultado_ko.iterrows():
 
-# Crear un DataFrame con los ALTER TABLEs DB_DESA
-df_alter_tables_DB_DESA = pd.DataFrame(alter_tables_DB_desa, columns=["Table_Name", "Alter_Statement"])
 
-# Crear un DataFrame con los comentarios SI
-df_comment_tables_SI = pd.DataFrame(comment_tables_SI, columns=["Table_Name", "Comment_Statement"])
+    cadena1 = row['DDL en SI']
+    cadena2 = row['DDL en db_desa']
 
-# Crear un DataFrame con los comentarios DB_DESA
-df_comment_tables_DB_DESA = pd.DataFrame(comment_tables_DB_desa, columns=["Table_Name", "Comment_Statement"])
+    # Encuentra la longitud mínima de ambas cadenas
+    longitud_minima = min(len(cadena1), len(cadena2))
 
-# Fecha actual
+    # Inicializa la cadena de resultado
+    resultado = ""
+
+    # Variable para indicar si se ha encontrado alguna discrepancia
+    encontrada_discrepancia = False
+
+    # Recorre los caracteres hasta la longitud mínima
+    for i in range(longitud_minima):
+        if cadena1[i] == cadena2[i]:
+            resultado += cadena1[i]
+        else:
+            resultado += "[!!!!!!!!!!!!]"
+            encontrada_discrepancia = True
+            break
+
+    # Agrega "[!!!!!!!!!!!!]" para las partes restantes si las cadenas son de longitud diferente
+    if len(cadena1) != len(cadena2) and not encontrada_discrepancia:
+        resultado += "[!!!!!!!!!!!!]"
+
+    # Asigna el resultado al DataFrame
+    df_resultado_ko.at[index, 'Resultado'] = resultado
+
+
 fecha_actual = datetime.now()
 fecha_str = fecha_actual.strftime("%d%m%Y")
+excel_writer = pd.ExcelWriter(f'INFORME_BBDD_SI-DB_DESA_{fecha_str}.xlsx', engine='xlsxwriter')
 
-# Crear un archivo Excel
-excel_writer = pd.ExcelWriter(f'INFORME_BBDD_SI-DB_DESA{fecha_str}.xlsx', engine='xlsxwriter')
+# Escribir los DataFrames en hojas separadas
+df_elementos_comunes.to_excel(excel_writer, sheet_name='Tablas en ambos sistemas', index=False)
 
-# Hoja 1 - Comparación de Table_Names
-df_tablas_SI.sort_values(by=["Table_Name"], inplace=True)
-df_tablas_DB_DESA.sort_values(by=["Table_Name"], inplace=True)
-
-df_tablas_SI["Table_Name"] = df_tablas_SI["Table_Name"].str.strip()
-df_tablas_DB_DESA = df_tablas_DB_DESA[df_tablas_DB_DESA["Table_Name"].apply(lambda x: isinstance(x, str))]
-df_tablas_DB_DESA["Table_Name"] = df_tablas_DB_DESA["Table_Name"].astype(str).str.strip()
+df_solo_tablas_SI.to_excel(excel_writer, sheet_name='Tablas solo en SI', index=False)
+df_solo_tablas_DB_desa.to_excel(excel_writer, sheet_name='Tablas solo en DB_desa', index=False)
+df_ddl_create_para_SI.to_excel(excel_writer, sheet_name='DDL inexistentes en SI', index=False) 
+df_alter_para_SI.to_excel(excel_writer, sheet_name='ALTER inexistentes en SI', index=False) #Las que hay que hacer obligatoriamente porque no existían previamente
+df_comment_para_SI.to_excel(excel_writer, sheet_name='COMMENT inexistentes en SI', index=False) #Los que hay que hacer obligatoriamente porque no existían previamente
 
 
-df_tablas_SI.to_excel(excel_writer, sheet_name="Tabla_Names_SI", index=False)
-df_tablas_DB_DESA.to_excel(excel_writer, sheet_name="Tabla_Names_DB_DESA", index=False)
-
-# Hoja 2 - Comparación de Atributos
-df_tablas_SI_attributes = df_tablas_SI.copy()
-df_tablas_DB_DESA_attributes = df_tablas_DB_DESA.copy()
-
-df_tablas_SI_attributes["Attributes"] = df_tablas_SI_attributes["Attributes"].apply(lambda x: len(x))
-df_tablas_DB_DESA_attributes["Attributes"] = df_tablas_DB_DESA_attributes["Attributes"].apply(lambda x: len(x))
-
-df_tablas_SI_attributes.to_excel(excel_writer, sheet_name="Attributes_SI", index=False)
-df_tablas_DB_DESA_attributes.to_excel(excel_writer, sheet_name="Attributes_DB_DESA", index=False)
-
-# Hoja 3 - Comparación de ALTER TABLEs
-df_alter_tables_SI.sort_values(by=["Table_Name"], inplace=True)
-df_alter_tables_DB_DESA.sort_values(by=["Table_Name"], inplace=True)
-
-df_alter_tables_SI.to_excel(excel_writer, sheet_name="Alter_Tables_SI", index=False)
-df_alter_tables_DB_DESA.to_excel(excel_writer, sheet_name="Alter_Tables_DB_DESA", index=False)
-
-# Hoja 4 - Comparación de Comentarios
-df_comment_tables_SI.sort_values(by=["Table_Name"], inplace=True)
-df_comment_tables_DB_DESA.sort_values(by=["Table_Name"], inplace=True)
-
-df_comment_tables_SI.to_excel(excel_writer, sheet_name="Comments_SI", index=False)
-df_comment_tables_DB_DESA.to_excel(excel_writer, sheet_name="Comments_DB_DESA", index=False)
+#df_resultado_ko.to_excel(excel_writer, sheet_name='Elementos comunes KO', index=False)
+#df_ddl_create_para_DB_desa.to_excel(excel_writer, sheet_name='DDL TBLs no en DB_desa', index=False)
+#df_alter_para_DB_desa.to_excel(excel_writer, sheet_name='ALTER inexistentes en DB_desa', index=False)
+#df_comment_para_DB_desa.to_excel(excel_writer, sheet_name='COMMENT inexistentes en DB_desa', index=False) 
 
 # Guardar el archivo Excel
 excel_writer._save()
 
+
+colores = {'OK': 'b6d7a8', 'KO': 'fd5b5b'}
+
+# Cargar el archivo Excel para manipular el formato de las celdas
+archivo_excel = load_workbook(f'INFORME_BBDD_SI-DB_DESA_{fecha_str}.xlsx')
+
+# Acceder a la hoja de 'Elementos comunes'
+hoja_elementos_comunes = archivo_excel['Tablas en ambos sistemas']
+
+# Obtener las celdas de la columna 'Estado'
+celdas_estado = hoja_elementos_comunes['B']
+
+# Iterar sobre las celdas y aplicar el formato
+for celda in celdas_estado:
+    estado = celda.value
+    if estado in colores:
+        fill = PatternFill(start_color=colores[estado], end_color=colores[estado], fill_type='solid')
+        celda.fill = fill
+
+hoja_elementos_comunes.auto_filter.ref = hoja_elementos_comunes.dimensions
+
+# Guardar el archivo Excel actualizado
+archivo_excel.save(f'INFORME_BBDD_SI-DB_DESA_{fecha_str}.xlsx')
+
+excel_writer = pd.ExcelWriter(f'INFORME_TABLAS_COMUNES_KO_{fecha_str}.xlsx', engine='xlsxwriter')
+
+df_resultado_ko.to_excel(excel_writer, sheet_name='Elementos comunes', index=False)
+
+excel_writer._save()
+
+
 print("Proceso Finalizado")
-
-
-
